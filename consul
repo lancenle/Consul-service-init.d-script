@@ -1,0 +1,139 @@
+#!/bin/bash
+
+###
+# If this server's IP matches the server IP in /etc/consul/consul.cfg, then
+# consul starts as a server, otherwise, it starts as a client.
+# For CentOS and Ubuntu, this file could be placed in /etc/init.d/.
+#
+# Sample command line:
+#    service consul start
+#    service consul stop
+#    service consul status
+###
+
+
+###
+# Track the consul process for start, stop, and status
+###
+sFilePID=/var/run/consul.pid;
+
+###
+# Configuration file identfying the consul server and clients
+###
+sFileConfig=/etc/consul/consul.cfg;
+
+
+###
+# Get the private IP for binding, use a mask IP for the awk.
+# Awk should return a valid IP, e.g. sHostIP="11.15.245.10"
+# You may need to tweak the command to suit your needs.
+###
+sHostIP=$(ip route get 11.15.0.0 | awk '{print $NF; exit}');
+
+
+
+###
+# If a system configuration is used, then source it
+###
+if [ -f /etc/sysconfig/consul ]
+then
+   . /etc/sysconfig/consul;
+fi
+
+
+
+###
+# Determine from configuration file if this host will be a server
+###
+bThisHostIsAServer=FALSE;
+
+if [ -f ${sFileConfig} ]
+then
+   sServer=$(grep "server=" ${sFileConfig} | cut -d= -f2);
+
+   if [ "${sServer}" = "${sHostIP}" ]
+   then
+      bThisHostIsAServer=TRUE;
+   fi
+fi
+
+
+
+###
+# Start the service and write pid to a file
+# The pid can be used to stop, get status, or determine if consul is already running
+###
+start()
+{
+   if [ ${bThisHostIsAServer} = TRUE ]
+   then
+      echo "Starting service consul using IP ${sHostIP} as a server";
+
+      for sClient in $(grep "client=" ${sFileConfig} | cut -d= -f2)
+      do
+         echo "${sClient} is a client";
+      done
+
+
+      /usr/local/bin/consul agent -data-dir=/opt/consul-agent-log -server -bind=${sHostIP} > /dev/null 2>&1 &
+   else
+      echo "Starting service consul using ${sHostIP} as a client";
+      /usr/local/bin/consul agent -data-dir=/opt/consul-agent-log -bind=${sHostIP} > /dev/null 2>&1 &
+   fi
+
+   nPid=$!; 
+   echo ${nPid} > ${sFilePID};
+
+   return 0;
+}
+
+
+
+stop()
+{
+   if [ -f ${sFilePID} ]
+   then
+      echo "Stopping service consul";
+      kill -9 $(cat $sFilePID);
+      rm -f ${sFilePID};
+
+      return 0;
+   else
+      echo "Consul is not running.  Check ${sFilePID} if it should be running";
+
+      return 1;
+   fi
+}
+
+
+
+status() {
+   if [ -f ${sFilePID} ]
+   then
+      echo "Consul agent running with PID $(cat ${sFilePID})";
+
+      return 0;
+   else
+      echo "Consul agent not running";
+
+      return 1;
+   fi
+}
+
+
+
+###
+# Program entry point to start, stop, or get status
+###
+case "$1" in 
+   start)
+      start
+      ;;
+   stop)
+      stop
+      ;;
+   status)
+      status
+      ;;
+   *) echo "Invalid call: use start|stop|status"; exit 1;
+esac;
